@@ -1,8 +1,8 @@
 #![cfg(target_arch = "wasm32")]
 
 extern crate wasm_bindgen_test;
-use wasm_bindgen_test::*;
 use wasm_bindgen::prelude::*;
+use wasm_bindgen_test::*;
 
 use rusty_engine::{error::RenderError, Parser, ParserConfig, Renderer};
 
@@ -14,6 +14,16 @@ pub fn test_missing_closing_tag() {
 
 testtest <% test2
           ^"#;
+
+    let parser = Parser::new(content, &config);
+    let tokens = parser.parse_tokens();
+    assert_eq!(tokens, Err(RenderError::MissingClosingTag(err.into())));
+
+    let content = "\ntest\n\n<%";
+    let err = r#"line 4 col 2:
+
+<%
+ ^"#;
 
     let parser = Parser::new(content, &config);
     let tokens = parser.parse_tokens();
@@ -39,8 +49,16 @@ test <% test %> test
 pub fn test_syntax_error() {
     let config = ParserConfig::new("<%".into(), "%>".into(), '\0', '*', '-', '_', "tR".into());
     let content = r#"test <%* / %> test"#;
+    let err = "Invalid regular expression: missing /";
 
-    let renderer = Renderer::new(config);
+    let renderer = Renderer::new(config.clone());
     let res = renderer.render_content(content, &JsValue::NULL);
-    assert_eq!(res, Err(RenderError::SyntaxError));
+    assert_eq!(res, Err(RenderError::SyntaxError(err.into())));
+
+    let content = r#"test <% console.log('\'test\''); %> test"#;
+    let err = "missing ) after argument list";
+
+    let renderer = Renderer::new(config.clone());
+    let res = renderer.render_content(content, &JsValue::NULL);
+    assert_eq!(res, Err(RenderError::SyntaxError(err.into())));
 }

@@ -45,7 +45,7 @@ pub struct ParsingData {
 }
 
 #[wasm_bindgen]
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ParserConfig {
     opening_tag: String,
     closing_tag: String,
@@ -126,10 +126,10 @@ impl<'a> Parser<'a> {
             .content
             .split('\n')
             .take(d.line as usize)
-            .map(|l| l.len()+1)
+            .map(|l| l.len() + 1)
             .sum();
         let ch = d.ch - line_ch;
-        let mut spaces: String = (0..ch-1).map(|_| ' ').collect();
+        let mut spaces: String = (0..ch - 1).map(|_| ' ').collect();
         spaces += "^";
         let s = format!("line {} col {}:\n\n{}\n{}", d.line + 1, ch, line, spaces);
         s
@@ -283,6 +283,11 @@ impl<'a> Parser<'a> {
                 parsing_data.ch += text.len();
                 parsing_data.line += count_newlines(text);
             }
+            if i.is_empty() {
+                return Err(RenderError::MissingClosingTag(
+                    self.generate_backtrace(&mut parsing_data),
+                ));
+            }
 
             let (opening_whitespace, i) = self.parse_whitespace(i, &mut parsing_data)?;
             let (cmd_type, i) = self.parse_command_tag(i, &mut parsing_data)?;
@@ -300,7 +305,6 @@ impl<'a> Parser<'a> {
 
             parsing_data.ch += content.len();
             parsing_data.line += count_newlines(content);
-
             let command = Command {
                 r#type: cmd_type,
                 opening_whitespace,
@@ -407,7 +411,11 @@ impl Renderer {
             &JsValue::from(&fn_body).into(),
         ) {
             Ok(f) => f,
-            Err(_) => return Err(RenderError::SyntaxError),
+            Err(e) => {
+                let err = js_sys::Error::from(e);
+                let msg = err.message().as_string().unwrap();
+                return Err(RenderError::SyntaxError(msg));
+            }
         };
         let async_fn = js_sys::Function::from(async_fn);
         let res = match async_fn.call1(&JsValue::NULL, context) {
