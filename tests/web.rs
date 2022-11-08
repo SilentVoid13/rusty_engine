@@ -20,7 +20,7 @@ pub fn test_parse_tokens() {
 test<%_ test %>test
 <%- test _%>
 test
-<%*_ test -%> test <% test %>
+<%_* test -%> test <% test %>
 test"#;
 
     let parser = Parser::new(content, &config);
@@ -73,7 +73,7 @@ pub fn test_generate_js() {
         '_',
         "tR".into(),
     );
-    let content = "<%- test -%>\ntest\n\n<%*_ test %>'test'<% test %>";
+    let content = "<%- test -%>\ntest\n\n<%_* test %>'test'<% test %>";
     let parser = Parser::new(content, &config);
     let tokens = parser.parse_tokens().unwrap();
     let js_func = parser.generate_js(tokens);
@@ -108,7 +108,7 @@ pub fn test_whitespace_control() {
         '_',
         "tR".into(),
     );
-    let content = "\ntest\n\n<%_ test -%>\r\n\ntest\n\r<%*- test _%>\rtest\r\n<%*- test -%> test <% test %>\ntest";
+    let content = "\ntest\n\n<%_ test -%>\r\n\ntest\n\r<%-* test _%>\rtest\r\n<%-* test -%> test <% test %>\ntest";
 
     let parser = Parser::new(content, &config);
     let tokens = parser.parse_tokens().unwrap();

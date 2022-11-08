@@ -5,14 +5,14 @@ pub type Result<T> = std::result::Result<T, RenderError>;
 
 #[derive(Error, Debug, PartialEq)]
 pub enum RenderError {
-    #[error("Syntax error")]
+    #[error("Syntax error inside command")]
     SyntaxError,
-    #[error("Function error")]
+    #[error("Template function call error")]
     FunctionError,
-    #[error("Missing command tag")]
-    MissingCommandTag,
-    #[error("Missing closing tag")]
-    MissingClosingTag,
+    #[error("Missing command type at `{0}`")]
+    MissingCommandType(String),
+    #[error("Missing closing command tag at `{0}`")]
+    MissingClosingTag(String),
 }
 
 impl Into<JsValue> for RenderError {

@@ -7,11 +7,11 @@ use std::collections::HashMap;
 use std::fmt::Write;
 
 use serde::{Deserialize, Serialize};
+use utils::count_newlines;
 use wasm_bindgen::prelude::*;
 
 use crate::error::RenderError;
 use crate::error::Result;
-use crate::utils::log;
 
 #[derive(Debug, PartialEq)]
 pub enum CommandType {
@@ -37,6 +37,11 @@ pub struct Command<'a> {
 pub enum Token<'a> {
     Text(&'a str),
     Command(Command<'a>),
+}
+
+pub struct ParsingData {
+    line: usize,
+    ch: usize,
 }
 
 #[wasm_bindgen]
@@ -115,20 +120,37 @@ impl<'a> Parser<'a> {
         Parser { content, config }
     }
 
-    fn parse_command_tag(&self, i: &'a str) -> Result<(CommandType, &'a str)> {
+    fn generate_backtrace(&self, d: &ParsingData) -> String {
+        let line = self.content.lines().skip(d.line as usize).next().unwrap();
+        let line_ch: usize = self
+            .content
+            .split('\n')
+            .take(d.line as usize)
+            .map(|l| l.len()+1)
+            .sum();
+        let ch = d.ch - line_ch;
+        let mut spaces: String = (0..ch-1).map(|_| ' ').collect();
+        spaces += "^";
+        let s = format!("line {} col {}:\n\n{}\n{}", d.line + 1, ch, line, spaces);
+        s
+    }
+
+    fn parse_command_tag(&self, i: &'a str, d: &mut ParsingData) -> Result<(CommandType, &'a str)> {
         let c = i.chars().next();
         let c = match c {
             Some(c) => c,
-            None => return Err(RenderError::MissingCommandTag),
+            None => return Err(RenderError::MissingCommandType(self.generate_backtrace(d))),
         };
 
         // TODO: improve this
         let mut input = i;
         let cmd_type = if c == self.config.execution {
             input = &i[1..];
+            d.ch += 1;
             CommandType::Execution
         } else if c == self.config.interpolate {
             input = &i[1..];
+            d.ch += 1;
             CommandType::Interpolate
         } else {
             if self.config.interpolate == '\0' {
@@ -136,14 +158,18 @@ impl<'a> Parser<'a> {
             } else if self.config.execution == '\0' {
                 CommandType::Execution
             } else {
-                return Err(RenderError::MissingCommandTag);
+                return Err(RenderError::MissingCommandType(self.generate_backtrace(d)));
             }
         };
 
         Ok((cmd_type, input))
     }
 
-    fn parse_whitespace(&self, i: &'a str) -> Result<(Option<Whitespace>, &'a str)> {
+    fn parse_whitespace(
+        &self,
+        i: &'a str,
+        d: &mut ParsingData,
+    ) -> Result<(Option<Whitespace>, &'a str)> {
         let c = i.chars().next();
         let whitespace = match c {
             Some(c) => {
@@ -160,15 +186,17 @@ impl<'a> Parser<'a> {
         let mut input = i;
         if whitespace.is_some() {
             input = &i[1..];
+            d.ch += 1;
         }
         Ok((whitespace, input))
     }
 
-    fn parse_closing_tag(&self, i: &'a str) -> Result<(&'a str, &'a str)> {
+    fn parse_closing_tag(&self, i: &'a str, d: &mut ParsingData) -> Result<(&'a str, &'a str)> {
         let (content, i) = match i.split_once(&self.config.closing_tag) {
             Some(x) => x,
-            None => return Err(RenderError::MissingClosingTag),
+            None => return Err(RenderError::MissingClosingTag(self.generate_backtrace(d))),
         };
+        d.ch += self.config.closing_tag.len();
         Ok((content, i))
     }
 
@@ -186,7 +214,7 @@ impl<'a> Parser<'a> {
         res.iter().collect()
     }
 
-    pub fn trim_whitespace<'b>(
+    fn trim_whitespace<'b>(
         &self,
         i: &'b str,
         whitespace: Option<&Whitespace>,
@@ -210,7 +238,7 @@ impl<'a> Parser<'a> {
                             }
                         }
                         x
-                    },
+                    }
                     Some('\r') => {
                         let mut x = 1;
                         if left {
@@ -245,24 +273,33 @@ impl<'a> Parser<'a> {
     pub fn parse_tokens(&self) -> Result<Vec<Token>> {
         let mut tokens = vec![];
         let mut input = self.content;
+        let mut parsing_data = ParsingData { ch: 0, line: 0 };
 
         while let Some((text, i)) = input.split_once(&self.config.opening_tag) {
+            parsing_data.ch += self.config.opening_tag.len();
+
             if !text.is_empty() {
                 tokens.push(Token::Text(text));
+                parsing_data.ch += text.len();
+                parsing_data.line += count_newlines(text);
             }
 
-            let (cmd_type, i) = self.parse_command_tag(i)?;
-            let (opening_whitespace, i) = self.parse_whitespace(i)?;
-            let (part1, i) = self.parse_closing_tag(i)?;
+            let (opening_whitespace, i) = self.parse_whitespace(i, &mut parsing_data)?;
+            let (cmd_type, i) = self.parse_command_tag(i, &mut parsing_data)?;
+            let (part1, i) = self.parse_closing_tag(i, &mut parsing_data)?;
 
             // TODO: improve that
             let content_whitespace = &part1[part1.len() - 1..];
-            let (closing_whitespace, _) = self.parse_whitespace(content_whitespace)?;
+            let (closing_whitespace, _) =
+                self.parse_whitespace(content_whitespace, &mut parsing_data)?;
             let content = if closing_whitespace.is_none() {
                 part1
             } else {
                 &part1[..part1.len() - 1]
             };
+
+            parsing_data.ch += content.len();
+            parsing_data.line += count_newlines(content);
 
             let command = Command {
                 r#type: cmd_type,
@@ -276,6 +313,8 @@ impl<'a> Parser<'a> {
         }
         if !input.is_empty() {
             tokens.push(Token::Text(input));
+            parsing_data.ch += input.len();
+            parsing_data.line += count_newlines(input);
         }
 
         Ok(tokens)
@@ -362,13 +401,11 @@ impl Renderer {
         let parser = Parser::new(content, &self.config);
         let tokens = parser.parse_tokens()?;
         let fn_body = parser.generate_js(tokens);
-        let async_fn = match self
-            .async_constructor
-            .call2(
-                &JsValue::NULL,
-                &JsValue::from("tp"),
-                &JsValue::from(&fn_body).into(),
-            ) {
+        let async_fn = match self.async_constructor.call2(
+            &JsValue::NULL,
+            &JsValue::from("tp"),
+            &JsValue::from(&fn_body).into(),
+        ) {
             Ok(f) => f,
             Err(_) => return Err(RenderError::SyntaxError),
         };
